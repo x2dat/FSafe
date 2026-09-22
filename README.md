@@ -40,7 +40,7 @@ FastAPI server · asyncio crawler · 20+ security checks · HTML + JSON reports 
 ## Quick start
 
 ```bash
-git clone https://github.com/<you>/fsafe.git
+git clone https://github.com/x2dat/fsafe.git
 cd fsafe
 pip install -r requirements.txt
 ```
