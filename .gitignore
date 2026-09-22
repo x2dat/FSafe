@@ -11,9 +11,6 @@ dist/
 fsafe_report*.html
 fsafe_report*.json
 test_report*
-
-# Local authorization audit trail (never commit — it's per-machine evidence)
-.fsafe_auth/
 *.report.html
 
 # Editors / OS

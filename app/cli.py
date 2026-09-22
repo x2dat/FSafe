@@ -9,10 +9,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import time
 
-from . import authlog
-from .colors import (BOLD, RESET, dim, err, grade as gcolor, head, ok,
-                     finding_line, warn)
+from .colors import (BOLD, RESET, dim, err, grade as gcolor, head, ok, warn,
+                     finding_line)
 from .models import ScanConfig
 from .engine import Engine
 
@@ -33,32 +33,12 @@ def main() -> int:
     ap.add_argument("--ignore-robots", action="store_true", help="ignore robots.txt (still stay legal!)")
     ap.add_argument("--out", default="fsafe_report.html", help="output HTML report path")
     ap.add_argument("--json-out", default=None, help="optional JSON report path")
-    ap.add_argument("--auth-log", action="store_true", help="show the authorization audit log and exit")
     ap.add_argument("--yes", action="store_true", help="assert authorization non-interactively (CI use)")
     args = ap.parse_args()
 
     print(BANNER)
 
-    # ---- audit-log viewer mode ----
-    if args.auth_log:
-        state = authlog.verify()
-        if state["ok"] and state["entries"]:
-            print(ok(f"✓ audit trail intact — {state['entries']} entries, chain verified"))
-        elif state["entries"] == 0:
-            print(warn("no authorization entries recorded yet"))
-        for issue in state["issues"]:
-            print(err(f"⚠ TAMPER EVIDENCE: {issue}"))
-        entries = authlog._read_log()
-        for e in entries:
-            icon = "✓" if e["kind"] == "AUTHORIZATION" else "•"
-            line = f"  {icon} {e['time_local']}  {e['kind']:14} {e['user']}@{e['host']}  {e['target']}"
-            if e["kind"] == "AUTHORIZATION":
-                print(ok(line))
-            else:
-                print(dim(line))
-        return 0
-
-    # ---- authorization gate ----
+    # ---- authorization gate: typed statement or explicit --yes assertion ----
     print(f"Before scanning, confirm your authorization for {BOLD}{args.url}{RESET}:")
     print(dim("  You must own this target OR have written permission from its owner to"))
     print(dim("  security-test it. Unauthorized scanning is illegal in most jurisdictions."))
@@ -67,31 +47,19 @@ def main() -> int:
         print(warn("\nAuthorization ASSERTED via --yes — you are responsible for this claim."))
     else:
         ans = input(f"\n{BOLD}Type exactly:{RESET} I am authorized\n> ").strip()
-        if not authlog.phrase_matches(ans):
+        if ans.lower() != "i am authorized":
             print(err("✖ Aborted — authorization not confirmed. Scanning without permission is illegal."))
             return 2
-        method = f"typed confirmation '{authlog.PHRASE}'"
-        print(ok("✓ Authorization statement received."))
-
-    # ---- tamper-evident audit trail ----
-    rec = authlog.verify_and_record_authorization(args.url, method)
-    if not rec["verified"]["ok"]:
-        for issue in rec["verified"]["issues"]:
-            print(err(f"⚠⚠ TAMPER ALERT: {issue}"))
-        print(err("  The authorization trail for this tool was modified or deleted."))
-        print(err("  This event has been permanently recorded in the audit log."))
-    e = rec["entry"]
-    print(ok(f"✓ Authorization logged: {e['time_local']} · {e['user']}@{e['host']} · "
-             f"chain hash {e['hash'][:12]}…"))
+        method = "typed confirmation 'I am authorized'"
+        print(ok("✓ Authorization confirmed."))
 
     cfg = ScanConfig(
         url=args.url, max_pages=args.max_pages, delay=args.delay, timeout=args.timeout,
         brute_dirs=not args.no_brute, respect_robots=not args.ignore_robots, authorized=True)
 
     engine = Engine()
-    engine.authorization_record = (
-        f"{method} · audit entry {e['hash'][:12]} · "
-        + ("chain verified" if rec["verified"]["ok"] else "TAMPER DETECTED (see audit log)"))
+    # recorded in the reports: proof that the operator agreed, and when
+    engine.authorization_record = f"{method} at {time.strftime('%Y-%m-%d %H:%M:%S')}"
 
     async def wait():
         job, jerr = engine.create_job(cfg)
@@ -112,7 +80,6 @@ def main() -> int:
     if job.status == "error":
         print(err(f"✖ SCAN FAILED: {job.error}"))
         return 1
-    authlog.record_scan_result(cfg.url, len(job.findings), job.grade)
     print(f" {head('Target ')} {job.cfg.url}")
     print(f" {head('Grade  ')} {gcolor(job.grade)}{dim(f'  (risk {job.risk}/100)')}")
     print(f" {head('Pages  ')} {job.stats.get('pages')}   "
