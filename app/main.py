@@ -82,8 +82,25 @@ async def job_json(job_id: str):
 
 
 def run():
+    import socket
     import uvicorn
-    port = int(os.environ.get("FSAFE_PORT", "8787"))
+
+    preferred = int(os.environ.get("FSAFE_PORT", "8787"))
+    port = preferred
+    # if the preferred port is taken, walk up until a free one is found
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        while True:
+            try:
+                s.bind(("127.0.0.1", port))
+                break
+            except OSError:
+                port += 1
+                if port > preferred + 50:
+                    print(f"ERROR: no free port in {preferred}-{preferred + 50}")
+                    raise SystemExit(1)
+    if port != preferred:
+        print(f"(port {preferred} busy — using {port} instead)")
     print(f"🛡 FSafe dashboard → http://127.0.0.1:{port}")
     print("   Authorized testing only. Scope-locked, rate-limited, non-destructive.")
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
