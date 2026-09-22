@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FSafe — Web Vulnerability Scanner</title>
+<style>
+:root{--bg:#0b0e14;--panel:#131722;--line:#232a3a;--txt:#e6e6e6;--dim:#8b93a7;
+--crit:#e5484d;--high:#f76b15;--med:#ffb224;--low:#46a758;--info:#3e63dd;--acc:#6ea8fe}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--txt);font-family:'Segoe UI',system-ui,sans-serif;margin:0}
+.wrap{max-width:1100px;margin:0 auto;padding:24px}
+h1{font-size:26px;margin:0 0 4px}h1 span{color:var(--acc)}
+.sub{color:var(--dim);font-size:13px;margin-bottom:20px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+label{font-size:12px;color:var(--dim);display:block;margin:10px 0 4px}
+input[type=text],input[type=number]{width:100%;background:#0d1119;border:1px solid var(--line);
+ color:var(--txt);border-radius:8px;padding:10px 12px;font-size:14px}
+.row{display:flex;gap:12px;flex-wrap:wrap}.row>div{flex:1;min-width:130px}
+button{background:var(--acc);color:#04101f;border:0;border-radius:8px;padding:12px 22px;
+ font-size:15px;font-weight:700;cursor:pointer;margin-top:14px}
+button:disabled{opacity:.5;cursor:default}
+button.ghost{background:transparent;color:var(--dim);border:1px solid var(--line)}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px;margin-top:12px;color:var(--txt)}
+.chk input{accent-color:var(--acc);width:16px;height:16px}
+.notice{background:#1d1608;border:1px solid #4d3a10;color:#ffd479;border-radius:8px;
+ padding:10px 14px;font-size:12.5px;margin-top:12px}
+.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:14px 0}
+.pill{background:#0d1119;border:1px solid var(--line);border-radius:10px;padding:12px;text-align:center}
+.pill b{font-size:22px;display:block}
+.pill small{color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+.badge{color:#fff;border-radius:6px;padding:2px 10px;font-size:11px;font-weight:700;text-transform:uppercase}
+.finding{border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:10px;background:#0d1119}
+.finding h3{margin:0 0 6px;font-size:14.5px}
+.finding .u{color:var(--acc);font-size:11.5px;word-break:break-all}
+.finding p{margin:6px 0;font-size:13px;color:#c7cdd9}
+.finding .fix{color:#9dd0a5;font-size:12.5px}
+.cwe{color:var(--dim);font-size:11px}
+.grade{font-size:58px;font-weight:800;line-height:1}
+.bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin-top:8px}
+.bar>div{height:100%}
+#log{background:#080b10;border:1px solid var(--line);border-radius:10px;padding:12px;
+ font:11.5px/1.6 Consolas,monospace;color:#7ea5c9;max-height:180px;overflow-y:auto;white-space:pre-wrap}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td,th{padding:8px;border-bottom:1px solid var(--line);text-align:left}
+a{color:var(--acc)}
+.hidden{display:none}
+.meter{display:flex;gap:2px;height:10px;border-radius:5px;overflow:hidden;margin-top:10px}
+.meter div{flex:1}
+</style>
+</head>
+<body><div class="wrap">
+<h1>🛡 FSafe<span> · web vulnerability scanner</span></h1>
+<div class="sub">Crawls your target, probes headers, TLS, cookies, forms, params and source — then reports everything it finds. Authorized testing only.</div>
+
+<!-- ============ launch form ============ -->
+<div class="card" id="formCard">
+  <label>Target URL</label>
+  <input type="text" id="url" placeholder="https://testsite.local" spellcheck="false">
+  <div class="row">
+    <div><label>Max pages</label><input type="number" id="maxPages" value="30" min="1" max="300"></div>
+    <div><label>Request delay (s)</label><input type="number" id="delay" value="0.35" min="0" step="0.05"></div>
+  </div>
+  <div class="chk"><input type="checkbox" id="brute" checked><label for="brute" style="margin:0">Probe common sensitive paths (.env, backups, admin panels…)</label></div>
+  <div class="chk"><input type="checkbox" id="robots" checked><label for="robots" style="margin:0">Respect robots.txt</label></div>
+  <div class="chk"><input type="checkbox" id="authorized"><label for="authorized" style="margin:0">
+    I confirm I <b>own this target or have written permission</b> to security-test it.</label></div>
+  <div class="notice">⚠ Scanning systems without authorization is illegal in most jurisdictions
+    (CFAA, Computer Misuse Act, etc.). FSafe is scope-locked to the exact host you enter,
+    rate-limited, and uses non-destructive payloads only.</div>
+  <button id="startBtn" onclick="startScan()">Start scan</button>
+  <span id="formErr" style="color:var(--crit);font-size:13px;margin-left:10px"></span>
+</div>
+
+<!-- ============ progress ============ -->
+<div class="card hidden" id="progCard">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <div><span class="badge" id="statusBadge" style="background:var(--info)">STARTING</span>
+      <b id="targetLbl" style="margin-left:8px"></b></div>
+    <button class="ghost" onclick="cancelScan()">Stop</button>
+  </div>
+  <div class="bar"><div id="progBar" style="width:5%;background:var(--acc);transition:width .4s"></div></div>
+  <div id="log" style="margin-top:12px"></div>
+</div>
+
+<!-- ============ results ============ -->
+<div id="results" class="hidden">
+  <div class="card" style="text-align:center">
+    <div class="grade" id="gradeLbl">A</div>
+    <div style="color:var(--dim)" id="riskLbl"></div>
+    <div class="meter" id="sevMeter"></div>
+    <div class="grid" style="grid-template-columns:repeat(4,1fr);margin-top:14px">
+      <div class="pill"><b id="stPages">0</b><small>pages</small></div>
+      <div class="pill"><b id="stReq">0</b><small>requests</small></div>
+      <div class="pill"><b id="stParams">0</b><small>params</small></div>
+      <div class="pill"><b id="stTime">0s</b><small>elapsed</small></div>
+    </div>
+    <a id="htmlLink" href="#" target="_blank">Open full HTML report</a> ·
+    <a id="jsonLink" href="#" target="_blank">JSON</a>
+  </div>
+  <div class="card"><h3 style="margin:0 0 12px">Findings</h3><div id="findings"></div></div>
+</div>
+
+<script>
+const SEV={critical:'#e5484d',high:'#f76b15',medium:'#ffb224',low:'#46a758',info:'#3e63dd'};
+let jobId=null,pollTimer=null;
+
+async function startScan(){
+  const err=document.getElementById('formErr');err.textContent='';
+  if(!document.getElementById('authorized').checked){err.textContent='Confirm authorization first.';return}
+  const body={url:document.getElementById('url').value.trim(),
+    maxPages:+document.getElementById('maxPages').value,
+    delay:+document.getElementById('delay').value,
+    brute_dirs:document.getElementById('brute').checked,
+    respect_robots:document.getElementById('robots').checked,
+    authorized:true};
+  const r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const j=await r.json();
+  if(!r.ok){err.textContent=j.detail||'error';return}
+  jobId=j.id;
+  document.getElementById('formCard').classList.add('hidden');
+  document.getElementById('progCard').classList.remove('hidden');
+  document.getElementById('targetLbl').textContent=body.url;
+  pollTimer=setInterval(poll,900);poll();
+}
+async function cancelScan(){if(jobId)await fetch(`/api/scan/${jobId}/cancel`,{method:'POST'})}
+
+async function poll(){
+  const j=await (await fetch(`/api/scan/${jobId}`)).json();
+  document.getElementById('statusBadge').textContent=j.status.toUpperCase();
+  document.getElementById('statusBadge').style.background=
+    j.status==='done'?'#46a758':j.status==='error'?'#e5484d':'#3e63dd';
+  const n=j.log?.length||0;
+  document.getElementById('progBar').style.width=Math.max(5,Math.min(95,n*3))+'%';
+  document.getElementById('log').textContent=(j.log||[]).join('\n');
+  const box=document.getElementById('log');box.scrollTop=box.scrollHeight;
+  if(j.status==='done'||j.status==='error'||j.status==='cancelled'){
+    clearInterval(pollTimer);
+    if(j.status==='done')render(j);
+    else{document.getElementById('progBar').style.width='100%';
+      document.getElementById('log').textContent+='\n\n✖ '+(j.error||j.status);}
+  }
+}
+function render(j){
+  document.getElementById('progCard').classList.add('hidden');
+  const res=document.getElementById('results');res.classList.remove('hidden');
+  const g=document.getElementById('gradeLbl');g.textContent=j.grade;
+  g.style.color=['A','B'].includes(j.grade)?'#46a758':j.grade==='C'?'#ffb224':'#e5484d';
+  document.getElementById('riskLbl').textContent=`risk score ${j.risk}/100 · ${j.findings.length} findings`;
+  const c={};for(const f of j.findings)c[f.severity]=(c[f.severity]||0)+1;
+  document.getElementById('sevMeter').innerHTML=
+    ['critical','high','medium','low','info'].map(s=>`<div style="background:${SEV[s]};opacity:${c[s]?1:.15}"></div>`).join('');
+  document.getElementById('stPages').textContent=j.stats.pages??0;
+  document.getElementById('stReq').textContent=j.stats.requests??0;
+  document.getElementById('stParams').textContent=j.stats.params??0;
+  document.getElementById('stTime').textContent=(j.stats.elapsed??0)+'s';
+  document.getElementById('htmlLink').href=`/api/scan/${jobId}/report.html`;
+  document.getElementById('jsonLink').href=`/api/scan/${jobId}/report.json`;
+  const rank={critical:0,high:1,medium:2,low:3,info:4};
+  document.getElementById('findings').innerHTML=j.findings.sort((a,b)=>rank[a.severity]-rank[b.severity])
+   .map(f=>`<div class="finding">
+      <h3><span class="badge" style="background:${SEV[f.severity]}">${f.severity}</span> ${esc(f.title)}
+          ${f.cwe?`<span class="cwe">${esc(f.cwe)}</span>`:''}</h3>
+      <div class="u">${esc(f.url)}</div>
+      <p>${esc(f.description)} <i style="color:var(--dim)">(${f.confidence} confidence)</i></p>
+      <p class="fix">✔ Fix: ${esc(f.remediation)}</p>
+    </div>`).join('')||'<p>🎉 Nothing found — nice.</p>';
+}
+function esc(s){return (s??'').toString().replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+</script>
+</div></body></html>
