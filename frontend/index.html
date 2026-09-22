@@ -61,6 +61,7 @@ a{color:var(--acc)}
     <div><label>Max pages</label><input type="number" id="maxPages" value="30" min="1" max="300"></div>
     <div><label>Request delay (s)</label><input type="number" id="delay" value="0.35" min="0" step="0.05"></div>
   </div>
+  <div class="chk"><input type="checkbox" id="recon" checked><label for="recon" style="margin:0">Gather recon — DNS, WHOIS, subdomains, hosting, ports, tech stack, emails</label></div>
   <div class="chk"><input type="checkbox" id="brute" checked><label for="brute" style="margin:0">Probe common sensitive paths (.env, backups, admin panels…)</label></div>
   <div class="chk"><input type="checkbox" id="robots" checked><label for="robots" style="margin:0">Respect robots.txt</label></div>
   <div class="chk"><input type="checkbox" id="authorized"><label for="authorized" style="margin:0">
@@ -99,6 +100,7 @@ a{color:var(--acc)}
     <a id="jsonLink" href="#" target="_blank">JSON</a>
   </div>
   <div class="card"><h3 style="margin:0 0 12px">Findings</h3><div id="findings"></div></div>
+  <div id="reconWrap"></div>
 </div>
 
 <script>
@@ -112,6 +114,7 @@ async function startScan(){
     maxPages:+document.getElementById('maxPages').value,
     delay:+document.getElementById('delay').value,
     brute_dirs:document.getElementById('brute').checked,
+    include_recon:document.getElementById('recon').checked,
     respect_robots:document.getElementById('robots').checked,
     authorized:true};
   const r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -165,6 +168,46 @@ function render(j){
       <p>${esc(f.description)} <i style="color:var(--dim)">(${f.confidence} confidence)</i></p>
       <p class="fix">✔ Fix: ${esc(f.remediation)}</p>
     </div>`).join('')||'<p>🎉 Nothing found — nice.</p>';
+  renderRecon(j.recon||{});
+}
+function rc(title,body){return body?`<div class="card"><h3 style="margin:0 0 10px">${title}</h3>${body}</div>`:''}
+function renderRecon(r){
+  const w=document.getElementById('reconWrap');
+  if(!r||!Object.keys(r).length){w.innerHTML='';return}
+  let h='<h2 style="margin:18px 0 0">🌐 Recon & footprint</h2>';
+  const dns=r.dns&&r.dns.records;
+  if(dns){
+    const rows=Object.entries(dns).map(([t,list])=>list.map(rec=>
+      `<tr><td style="color:var(--acc);width:70px">${esc(t)}</td><td class="u">${esc(rec.data)}</td></tr>`).join('')).join('');
+    h+=rc('DNS records '+(r.dns.dnssec?'<span class="cwe">· DNSSEC on</span>':'<span class="cwe">· DNSSEC off</span>'),
+      `<table>${rows}</table>`);
+  }
+  const g=r.geo;
+  if(g&&g.ip) h+=rc('Hosting',`<p><b>${esc(g.ip)}</b> — ${esc(g.org||g.isp||'')}<br>
+    ${esc([g.city,g.regionName,g.country].filter(Boolean).join(', '))}<br>
+    <span class="u">${esc(g.as||'')} ${esc(g.reverse||'')}</span><br>
+    <span class="cwe">all IPs: ${esc((g.all_ips||[]).join(', '))}</span></p>`);
+  const ports=r.ports&&r.ports.open;
+  if(ports) h+=rc(`Open ports (${ports.length}/${r.ports.tested} common tested)`,
+    ports.map(p=>`<span class="pill" style="display:inline-block;margin:3px"><b>${p.port}</b> ${esc(p.service)}${p.banner?`<br><small class="cwe">${esc(p.banner)}</small>`:''}</span>`).join(''));
+  if(r.tech&&r.tech.length) h+=rc('Technology stack',r.tech.map(t=>`<span class="badge" style="background:#1b2233;color:var(--acc);margin:2px">${esc(t)}</span>`).join(''));
+  if(r.subdomains&&r.subdomains.length) h+=rc(`Subdomains (${r.subdomains.length}, via Certificate Transparency)`,
+    `<p class="u">${esc(r.subdomains.join(' · '))}</p>`);
+  if(r.emails&&r.emails.length) h+=rc(`Emails found in pages (${r.emails.length})`,`<p class="u">${esc(r.emails.join(' · '))}</p>`);
+  const who=r.whois;
+  if(who&&who.registrar){
+    const bits=['registrar','created','expires','updated','status'].filter(k=>who[k])
+      .map(k=>`<b>${k}:</b> ${esc(Array.isArray(who[k])?who[k].join(', '):who[k])}`);
+    h+=rc('WHOIS',`<p>${bits.join('<br>')}</p><p class="cwe">via ${esc(who.server||'')}</p>`);
+  }
+  const wk=r.wellknown;
+  if(wk&&(wk.sitemap_urls||wk.security_txt||wk.humans_txt))
+    h+=rc('Well-known files',`<p>
+      ${wk.sitemap_urls?`sitemap.xml — <b>${wk.sitemap_urls}</b> URLs<br>`:''}
+      ${wk.security_txt?'security.txt — <b>present</b> ✅<br>':'security.txt — missing<br>'}
+      ${wk.humans_txt?'humans.txt — present':''}</p>
+      ${wk.security_txt?`<pre style="color:#7ea5c9;font-size:11px;white-space:pre-wrap">${esc(wk.security_txt)}</pre>`:''}`);
+  w.innerHTML=h;
 }
 function esc(s){return (s??'').toString().replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 </script>

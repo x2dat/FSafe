@@ -78,7 +78,11 @@ def normalize_url(raw: str) -> tuple[str, str]:
 
 def origin_of(url: str) -> str:
     p = httpx.URL(url)
-    return f"{p.scheme}://{p.host}" + (f":{p.port}" if p.port not in (80, 443) else "")
+    port = p.port
+    default = {"http": 80, "https": 443}.get(p.scheme)
+    if port is None or port == default:
+        return f"{p.scheme}://{p.host}"
+    return f"{p.scheme}://{p.host}:{port}"
 
 
 def same_scope(url: str, scope: str) -> bool:

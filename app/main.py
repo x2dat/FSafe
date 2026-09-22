@@ -25,6 +25,7 @@ class ScanRequest(BaseModel):
     delay: float = 0.35
     brute_dirs: bool = True
     respect_robots: bool = True
+    include_recon: bool = True
     authorized: bool = False
 
 
@@ -42,7 +43,7 @@ async def start_scan(req: ScanRequest):
     cfg = ScanConfig(
         url=req.url, max_pages=req.max_pages, delay=req.delay,
         brute_dirs=req.brute_dirs, respect_robots=req.respect_robots,
-        authorized=req.authorized)
+        include_recon=req.include_recon, authorized=req.authorized)
     job, err = ENGINE.create_job(cfg)
     if err:
         raise HTTPException(400, err)

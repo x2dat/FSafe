@@ -69,6 +69,7 @@ class ScanConfig:
     timeout: float = 15.0
     brute_dirs: bool = True
     respect_robots: bool = True
+    include_recon: bool = True  # DNS/WHOIS/subdomains/ports/tech/emails
     authorized: bool = False  # must be True to start a scan
 
     def to_dict(self) -> dict:
@@ -79,6 +80,7 @@ class ScanConfig:
             "timeout": self.timeout,
             "brute_dirs": self.brute_dirs,
             "respect_robots": self.respect_robots,
+            "include_recon": self.include_recon,
         }
 
 

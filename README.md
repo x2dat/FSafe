@@ -36,6 +36,7 @@ FastAPI server · asyncio crawler · 20+ security checks · HTML + JSON reports 
 | **Auth & sessions** | Cookie flags (HttpOnly/Secure/SameSite), GET-submitted passwords, missing CSRF tokens, exposed admin panels |
 | **Info disclosure** | Secrets/API keys in client-side source, exposed `.env` / `.git` / backups / source maps, directory listings, verbose errors, robots.txt intel |
 | **Other** | Open redirect heuristics, TRACE method, technology fingerprinting |
+| **Recon** | DNS (all record types, DNSSEC, DoH with fallback), WHOIS (registrar/dates/status), subdomains via Certificate Transparency, hosting IP/geo/ASN, light common-port check with banners, tech-stack fingerprinting, email harvesting, `security.txt` / `sitemap.xml` / `humans.txt`, SPF/CAA checks |
 
 ---
 
@@ -109,6 +110,7 @@ app/
 ├── http_client.py  Global rate-limited HTTP client with scope helpers
 ├── parser.py       HTML/JS parsing, link/form/secret extraction
 ├── report.py       HTML + JSON report generation, grading
+├── recon.py        Passive recon: DNS, WHOIS, CT subdomains, geo, ports, tech, emails
 ├── cli.py          Standalone CLI runner
 ├── demo_target.py  Intentionally vulnerable local test server
 └── models.py       Data models (Findings, ScanConfig, PageData…)

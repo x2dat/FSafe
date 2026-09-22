@@ -21,6 +21,7 @@ class Job:
     log_lines: list[str] = field(default_factory=list)
     findings: list[dict] = field(default_factory=list)
     pages: list[dict] = field(default_factory=list)
+    recon: dict = field(default_factory=dict)
     stats: dict = field(default_factory=dict)
     error: str = ""
     grade: str = ""
@@ -42,6 +43,7 @@ class Job:
             "stats": self.stats,
             "findings": self.findings,
             "pages": self.pages,
+            "recon": self.recon,
             "log": self.log_lines[-200:],
         }
 
@@ -96,24 +98,39 @@ class Engine:
             findings = await run_all_checks(cfg, client, crawl, stats, log, progress)
             findings.extend(attach_probed_paths_findings(crawler.probed_paths))
 
+            # ---- recon (DNS, WHOIS, subdomains, ports, tech, emails…) ----
+            if cfg.include_recon:
+                from .recon import run_recon, recon_findings
+                home = crawl.pages[0] if crawl.pages else None
+                htmls = [p.content for p in crawl.pages if p.content]
+                job.recon = await run_recon(cfg, client._client,
+                                            home.headers if home else {},
+                                            htmls, log, progress)
+                findings.extend(recon_findings(job.recon, cfg.url.split("//")[-1].split("/")[0]))
+
             # dedupe
-            seen: set[tuple] = set()
+            seen: set = set()
             unique: list = []
             for f in findings:
-                k = f.dedupe_key()
+                if isinstance(f, dict):
+                    k = (f.get("category"), f.get("title"), f.get("url"))
+                else:
+                    k = f.dedupe_key()
                 if k not in seen:
                     seen.add(k)
                     unique.append(f)
-            unique.sort(key=lambda f: ["critical", "high", "medium", "low", "info"].index(f.severity))
+            _sev = ["critical", "high", "medium", "low", "info"]
+            unique.sort(key=lambda f: _sev.index(f["severity"] if isinstance(f, dict) else f.severity))
 
             stats.finished_at = time.time()
-            job.findings = [f.to_dict() for f in unique]
+            job.findings = [f if isinstance(f, dict) else f.to_dict() for f in unique]
             job.pages = [{"url": p.url, "status": p.status} for p in crawl.pages]
             job.stats = stats.to_dict()
             job.grade, job.risk = score(job.findings)
-            job.html_report = report_html(cfg.url, cfg, job.stats, job.findings, job.pages, job.grade, job.risk)
+            job.html_report = report_html(cfg.url, cfg, job.stats, job.findings, job.pages,
+                                          job.grade, job.risk, job.recon)
             job.json_report = report_json(cfg.url, cfg, job.stats, job.findings, job.pages,
-                                          self.authorization_record)
+                                          self.authorization_record, job.recon)
             job.status = "done"
             job.authorization = self.authorization_record
             log(f"scan complete: {len(job.findings)} findings · grade {job.grade} (risk {job.risk}/100)")

@@ -30,6 +30,7 @@ def main() -> int:
     ap.add_argument("--delay", type=float, default=0.35, help="seconds between requests (default 0.35)")
     ap.add_argument("--timeout", type=float, default=15.0, help="request timeout seconds")
     ap.add_argument("--no-brute", action="store_true", help="skip common sensitive-path probing")
+    ap.add_argument("--no-recon", action="store_true", help="skip DNS/WHOIS/subdomains/ports/tech recon")
     ap.add_argument("--ignore-robots", action="store_true", help="ignore robots.txt (still stay legal!)")
     ap.add_argument("--out", default="fsafe_report.html", help="output HTML report path")
     ap.add_argument("--json-out", default=None, help="optional JSON report path")
@@ -55,7 +56,8 @@ def main() -> int:
 
     cfg = ScanConfig(
         url=args.url, max_pages=args.max_pages, delay=args.delay, timeout=args.timeout,
-        brute_dirs=not args.no_brute, respect_robots=not args.ignore_robots, authorized=True)
+        brute_dirs=not args.no_brute, respect_robots=not args.ignore_robots,
+        include_recon=not args.no_recon, authorized=True)
 
     engine = Engine()
     # recorded in the reports: proof that the operator agreed, and when
