@@ -244,10 +244,13 @@ async def active_checks(cfg: ScanConfig, client: RateLimitedClient, result: Craw
                         stats: JobStats, log, progress_cb=None) -> list[Finding]:
     out: list[Finding] = []
     tested = 0
+    # scope lock: only ever probe parameters on the target origin itself
+    scope = origin_of(cfg.url)
+    in_scope_params = [(u, p) for u, p in result.get_params if origin_of(u) == scope]
 
     # ---- reflected XSS in GET params ----
     seen_pairs: set[tuple[str, str]] = set()
-    for url, param in result.get_params[:60]:
+    for url, param in in_scope_params[:60]:
         key = (url.split("?")[0], param)
         if key in seen_pairs:
             continue
@@ -272,7 +275,7 @@ async def active_checks(cfg: ScanConfig, client: RateLimitedClient, result: Craw
 
     # ---- SQLi error-based in GET params ----
     sqli_seen: set[tuple[str, str]] = set()
-    for url, param in result.get_params[:40]:
+    for url, param in in_scope_params[:40]:
         key = (url.split("?")[0], param)
         if key in sqli_seen:
             continue
@@ -293,7 +296,7 @@ async def active_checks(cfg: ScanConfig, client: RateLimitedClient, result: Craw
                 break
 
     # ---- open redirect heuristic ----
-    for url, param in result.get_params:
+    for url, param in in_scope_params:
         if param.lower() in OPEN_REDIRECT_PARAMS:
             probe = _swap_param(url, param, f"https://{REDIRECT_MARK}/x")
             try:
@@ -310,7 +313,7 @@ async def active_checks(cfg: ScanConfig, client: RateLimitedClient, result: Craw
             break
 
     # ---- CRLF injection in path-derived params ----
-    for url, param in result.get_params[:20]:
+    for url, param in in_scope_params[:20]:
         probe = _swap_param(url, param, CRLF_PROBE.replace("%0d%0a", "\r\n"))
         try:
             r = await client.get(probe)
