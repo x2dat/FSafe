@@ -455,19 +455,25 @@ async def run_all_checks(cfg: ScanConfig, client: RateLimitedClient, result: Cra
     return findings
 
 
-def attach_probed_paths_findings(probed: dict[str, int]) -> list[Finding]:
-    """Called by the engine with the crawler's sensitive-path probe results."""
+def attach_probed_paths_findings(probed: dict[str, int], known_pages: set[str] | None = None) -> list[Finding]:
+    """Called by the engine with the crawler's sensitive-path probe results.
+    Paths that are regular linked/crawled app pages are not 'hidden surfaces'."""
     out: list[Finding] = []
+    known = {k.rstrip("/") for k in (known_pages or set())}
+
+    def is_known(u: str) -> bool:
+        return u.rstrip("/") in known
+
     sensitive_hits = [u for u in probed if any(
         s in u for s in ("/.git", "/.env", "/backup", "/id_rsa", "/dump.sql", "/db.sql",
-                         "/.htaccess", "/.svn", "/.DS_Store", "/web.config"))]
+                         "/.htaccess", "/.svn", "/.DS_Store", "/web.config")) and not is_known(u)]
     for u in sensitive_hits:
         out.append(_f("Sensitive file/directory exposed", "critical", "Information Disclosure", u,
                       "A well-known sensitive path is publicly reachable (source control, env files, backups, or keys).",
                       "Remove the file from the web root and block access (deny rules); rotate any exposed secrets.",
                       "CWE-538", f"HTTP {probed[u]}"))
     admin_hits = [u for u in probed if any(s in u for s in ("/admin", "/wp-admin", "/phpmyadmin", "/cpanel", "/console", "/actuator", "/panel", "/dashboard"))
-                  ]
+                  and not is_known(u)]
     for u in admin_hits:
         out.append(_f("Admin/management surface reachable", "medium", "Authentication", u,
                       "A management endpoint is reachable without authentication from the scanner.",

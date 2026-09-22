@@ -28,6 +28,11 @@ def _canon(url: str) -> str:
     return urlunparse((p.scheme, p.netloc, p.path or "/", p.params, p.query, ""))
 
 
+def _norm_body(text: str) -> str:
+    """Collapse whitespace for content comparison."""
+    return " ".join((text or "").split())
+
+
 class Crawler:
     def __init__(self, cfg: ScanConfig, client: RateLimitedClient, stats: JobStats, log):
         self.cfg = cfg
@@ -168,22 +173,46 @@ class Crawler:
         return self.result
 
     async def _probe_common_dirs(self) -> None:
-        """Light one-shot GET of well-known sensitive paths with soft-404 filtering."""
+        """Light one-shot GET of well-known sensitive paths with soft-404 filtering.
+
+        Baseline strategy: fetch a guaranteed-nonexistent random path first.
+        Many servers (SPA catch-alls, custom 404 handlers) return 200 for
+        everything — any probe whose body matches the baseline is a soft-404
+        and is discarded."""
         if not self.cfg.brute_dirs:
             return
-        self.log(f"probing {len(COMMON_DIRS)} common sensitive paths…")
+        import hashlib
+        import random
+
         base = self.cfg.url.rstrip("/")
+        # 1) baseline: a path that cannot exist
+        rnd = f"fsafe-{random.randbytes(6).hex()}"
+        try:
+            br = await self.client.get(f"{base}/{rnd}.html")
+            self.stats.requests = self.client.requests_sent
+            baseline = (br.status_code, _norm_body(br.text))
+        except httpx.HTTPError:
+            baseline = (404, "")
+        if baseline[0] == 200:
+            self.log(f"soft-404 baseline detected (server returns 200 for unknown paths) — filtering by content match")
+
+        self.log(f"probing {len(COMMON_DIRS)} common sensitive paths…")
         found: dict[str, int] = {}
         for d in COMMON_DIRS:
             url = f"{base}/{d}"
             try:
                 r = await self.client.get(url)
                 self.stats.requests = self.client.requests_sent
-                if r.status_code < 400:
-                    body = (r.text or "")[:400].lower()
-                    soft404 = ("not found" in body and len(r.text or "") < 500) or body[:60].find("404") >= 0
-                    if not soft404:
-                        found[url] = r.status_code
+                if r.status_code >= 400:
+                    continue
+                if r.status_code == baseline[0] and _norm_body(r.text) == baseline[1]:
+                    continue  # identical to the not-found baseline → soft 404
+                if r.status_code == 200 and "text/html" in r.headers.get("content-type", "") \
+                        and baseline[0] == 200 and baseline[1] \
+                        and _norm_body(r.text).startswith(baseline[1][:400]):
+                    # SPA fallback often appends route metadata; treat prefix-match as soft 404 too
+                    continue
+                found[url] = r.status_code
             except httpx.HTTPError:
                 self.stats.errors += 1
         self._probed = found

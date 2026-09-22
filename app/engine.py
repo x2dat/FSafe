@@ -96,7 +96,8 @@ class Engine:
                         crawl.get_params.append((fd.action, fld.name))
 
             findings = await run_all_checks(cfg, client, crawl, stats, log, progress)
-            findings.extend(attach_probed_paths_findings(crawler.probed_paths))
+            findings.extend(attach_probed_paths_findings(
+                crawler.probed_paths, {p.url for p in crawl.pages}))
 
             # ---- recon (DNS, WHOIS, subdomains, ports, tech, emails…) ----
             if cfg.include_recon:
