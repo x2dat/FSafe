@@ -23,6 +23,8 @@ FastAPI server · asyncio crawler · 20+ security checks · HTML + JSON reports 
 - **CLI** — fully standalone, no server needed, prints findings to the terminal
 - **Non-destructive** — detection-only payloads (no data destruction, brute force, or DoS patterns)
 - **Global rate limiter** — every request is throttled; polite by default
+- **Color-coded CLI** — severity badges, grades and statuses in ANSI color
+- **Tamper-evident authorization audit trail** — every scan records *who confirmed authorization, when, and for which target* into `.fsafe_auth/authorization_log.jsonl`, a hash-chained, hidden, read-only log. Editing or deleting it triggers loud tamper alerts that are themselves permanently recorded. Inspect with `python -m app.cli <url> --auth-log` (view mode).
 
 ### Checks included
 

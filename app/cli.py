@@ -10,8 +10,15 @@ import argparse
 import asyncio
 import sys
 
+from . import authlog
+from .colors import (BOLD, RESET, dim, err, grade as gcolor, head, ok,
+                     finding_line, warn)
 from .models import ScanConfig
 from .engine import Engine
+
+BANNER = f"""
+{head('🛡 FSafe — web vulnerability scanner')}{dim('  (authorized testing only)')}
+"""
 
 
 def main() -> int:
@@ -26,38 +33,70 @@ def main() -> int:
     ap.add_argument("--ignore-robots", action="store_true", help="ignore robots.txt (still stay legal!)")
     ap.add_argument("--out", default="fsafe_report.html", help="output HTML report path")
     ap.add_argument("--json-out", default=None, help="optional JSON report path")
-    ap.add_argument("--yes", action="store_true", help="skip authorization prompt (implies you are authorized)")
+    ap.add_argument("--auth-log", action="store_true", help="show the authorization audit log and exit")
+    ap.add_argument("--yes", action="store_true", help="assert authorization non-interactively (CI use)")
     args = ap.parse_args()
 
-    print(__doc__.strip())
-    print("\nBefore scanning, confirm your authorization:")
-    print(f"  You must own {args.url} OR have written permission from its owner")
-    print("  to perform security testing on it. Unauthorized scanning is illegal")
-    print("  in most jurisdictions (CFAA, Computer Misuse Act, etc.).")
-    auth_record = None
+    print(BANNER)
+
+    # ---- audit-log viewer mode ----
+    if args.auth_log:
+        state = authlog.verify()
+        if state["ok"] and state["entries"]:
+            print(ok(f"✓ audit trail intact — {state['entries']} entries, chain verified"))
+        elif state["entries"] == 0:
+            print(warn("no authorization entries recorded yet"))
+        for issue in state["issues"]:
+            print(err(f"⚠ TAMPER EVIDENCE: {issue}"))
+        entries = authlog._read_log()
+        for e in entries:
+            icon = "✓" if e["kind"] == "AUTHORIZATION" else "•"
+            line = f"  {icon} {e['time_local']}  {e['kind']:14} {e['user']}@{e['host']}  {e['target']}"
+            if e["kind"] == "AUTHORIZATION":
+                print(ok(line))
+            else:
+                print(dim(line))
+        return 0
+
+    # ---- authorization gate ----
+    print(f"Before scanning, confirm your authorization for {BOLD}{args.url}{RESET}:")
+    print(dim("  You must own this target OR have written permission from its owner to"))
+    print(dim("  security-test it. Unauthorized scanning is illegal in most jurisdictions."))
     if args.yes:
-        # --yes asserts authorization non-interactively (CI / scripted use)
-        auth_record = "asserted via --yes flag"
-        print("\nAuthorization ASSERTED via --yes — you are responsible for this claim.")
+        method = "asserted via --yes flag"
+        print(warn("\nAuthorization ASSERTED via --yes — you are responsible for this claim."))
     else:
-        ans = input("\nType exactly: I am authorized\n> ").strip().lower()
-        if ans != "i am authorized":
-            print("Aborted — authorization not confirmed. Scanning without permission is illegal.")
+        ans = input(f"\n{BOLD}Type exactly:{RESET} I am authorized\n> ").strip()
+        if not authlog.phrase_matches(ans):
+            print(err("✖ Aborted — authorization not confirmed. Scanning without permission is illegal."))
             return 2
-        auth_record = f"typed confirmation at {__import__('time').strftime('%Y-%m-%d %H:%M:%S')}"
-        print("Authorization recorded.")
+        method = f"typed confirmation '{authlog.PHRASE}'"
+        print(ok("✓ Authorization statement received."))
+
+    # ---- tamper-evident audit trail ----
+    rec = authlog.verify_and_record_authorization(args.url, method)
+    if not rec["verified"]["ok"]:
+        for issue in rec["verified"]["issues"]:
+            print(err(f"⚠⚠ TAMPER ALERT: {issue}"))
+        print(err("  The authorization trail for this tool was modified or deleted."))
+        print(err("  This event has been permanently recorded in the audit log."))
+    e = rec["entry"]
+    print(ok(f"✓ Authorization logged: {e['time_local']} · {e['user']}@{e['host']} · "
+             f"chain hash {e['hash'][:12]}…"))
 
     cfg = ScanConfig(
         url=args.url, max_pages=args.max_pages, delay=args.delay, timeout=args.timeout,
         brute_dirs=not args.no_brute, respect_robots=not args.ignore_robots, authorized=True)
 
     engine = Engine()
-    engine.authorization_record = auth_record
+    engine.authorization_record = (
+        f"{method} · audit entry {e['hash'][:12]} · "
+        + ("chain verified" if rec["verified"]["ok"] else "TAMPER DETECTED (see audit log)"))
 
     async def wait():
-        job, err = engine.create_job(cfg)
-        if err:
-            print(f"error: {err}")
+        job, jerr = engine.create_job(cfg)
+        if jerr:
+            print(err(f"error: {jerr}"))
             return 2
         while job.status in ("queued", "running"):
             await asyncio.sleep(0.5)
@@ -68,25 +107,27 @@ def main() -> int:
         return rc
     job = next(iter(engine.jobs.values()))
 
-    print("\n" + "=" * 60)
+    # ---- summary ----
+    print("\n" + head("═" * 62))
     if job.status == "error":
-        print(f"SCAN FAILED: {job.error}")
+        print(err(f"✖ SCAN FAILED: {job.error}"))
         return 1
-    print(f"Target : {job.cfg.url}")
-    print(f"Grade  : {job.grade}  (risk {job.risk}/100)")
-    print(f"Pages  : {job.stats.get('pages')}   Requests: {job.stats.get('requests')}   "
-          f"Time: {job.stats.get('elapsed')}s")
-    print(f"Findings: {len(job.findings)}")
-    from .models import SEV_COLOR
+    authlog.record_scan_result(cfg.url, len(job.findings), job.grade)
+    print(f" {head('Target ')} {job.cfg.url}")
+    print(f" {head('Grade  ')} {gcolor(job.grade)}{dim(f'  (risk {job.risk}/100)')}")
+    print(f" {head('Pages  ')} {job.stats.get('pages')}   "
+          f"{head('Requests')} {job.stats.get('requests')}   "
+          f"{head('Time')} {job.stats.get('elapsed')}s")
+    print(f" {head('Findings')} {warn(str(len(job.findings))) if job.findings else ok('0')}")
     for f in job.findings:
-        print(f"  [{f['severity'].upper():8}] {f['title']}  →  {f['url'][:70]}")
+        print(finding_line(f["severity"], f["title"], f["url"]))
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write(job.html_report)
-    print(f"\nHTML report: {args.out}")
+    print(f"\n {ok('HTML report:')} {args.out}")
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as fh:
             fh.write(job.json_report)
-        print(f"JSON report: {args.json_out}")
+        print(f" {ok('JSON report:')} {args.json_out}")
     return 0
 
 
