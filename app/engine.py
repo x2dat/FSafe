@@ -25,6 +25,7 @@ class Job:
     error: str = ""
     grade: str = ""
     risk: int = 0
+    authorization: str = ""
     html_report: str = ""
     json_report: str = ""
     task: asyncio.Task | None = None
@@ -37,6 +38,7 @@ class Job:
             "error": self.error,
             "grade": self.grade,
             "risk": self.risk,
+            "authorization": self.authorization,
             "stats": self.stats,
             "findings": self.findings,
             "pages": self.pages,
@@ -47,6 +49,8 @@ class Job:
 class Engine:
     def __init__(self):
         self.jobs: dict[str, Job] = {}
+        # e.g. "typed confirmation at 2026-09-22 10:40:00" — recorded into reports
+        self.authorization_record: str = "web UI checkbox"
 
     def create_job(self, cfg: ScanConfig) -> tuple[Job, str]:
         url, scope = normalize_url(cfg.url)
@@ -108,8 +112,10 @@ class Engine:
             job.stats = stats.to_dict()
             job.grade, job.risk = score(job.findings)
             job.html_report = report_html(cfg.url, cfg, job.stats, job.findings, job.pages, job.grade, job.risk)
-            job.json_report = report_json(cfg.url, cfg, job.stats, job.findings, job.pages)
+            job.json_report = report_json(cfg.url, cfg, job.stats, job.findings, job.pages,
+                                          self.authorization_record)
             job.status = "done"
+            job.authorization = self.authorization_record
             log(f"scan complete: {len(job.findings)} findings · grade {job.grade} (risk {job.risk}/100)")
         except asyncio.CancelledError:
             job.status = "cancelled"

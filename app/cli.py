@@ -30,17 +30,29 @@ def main() -> int:
     args = ap.parse_args()
 
     print(__doc__.strip())
-    if not args.yes:
-        ans = input(f"\nConfirm you are AUTHORIZED to security-test {args.url} [y/N]: ").strip().lower()
-        if ans != "y":
-            print("Aborted — scanning without permission is illegal.")
+    print("\nBefore scanning, confirm your authorization:")
+    print(f"  You must own {args.url} OR have written permission from its owner")
+    print("  to perform security testing on it. Unauthorized scanning is illegal")
+    print("  in most jurisdictions (CFAA, Computer Misuse Act, etc.).")
+    auth_record = None
+    if args.yes:
+        # --yes asserts authorization non-interactively (CI / scripted use)
+        auth_record = "asserted via --yes flag"
+        print("\nAuthorization ASSERTED via --yes — you are responsible for this claim.")
+    else:
+        ans = input("\nType exactly: I am authorized\n> ").strip().lower()
+        if ans != "i am authorized":
+            print("Aborted — authorization not confirmed. Scanning without permission is illegal.")
             return 2
+        auth_record = f"typed confirmation at {__import__('time').strftime('%Y-%m-%d %H:%M:%S')}"
+        print("Authorization recorded.")
 
     cfg = ScanConfig(
         url=args.url, max_pages=args.max_pages, delay=args.delay, timeout=args.timeout,
         brute_dirs=not args.no_brute, respect_robots=not args.ignore_robots, authorized=True)
 
     engine = Engine()
+    engine.authorization_record = auth_record
 
     async def wait():
         job, err = engine.create_job(cfg)

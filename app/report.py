@@ -68,13 +68,15 @@ def report_html(target: str, cfg: ScanConfig, stats: dict, findings: list[dict],
 </div></body></html>"""
 
 
-def report_json(target: str, cfg: ScanConfig, stats: dict, findings: list[dict], pages: list[dict]) -> str:
+def report_json(target: str, cfg: ScanConfig, stats: dict, findings: list[dict], pages: list[dict],
+                authorization: str = "") -> str:
     grade, risk = score(findings)
     return json.dumps({
         "tool": "FSafe 1.0",
         "target": target,
         "grade": grade,
         "risk_score": risk,
+        "authorization_record": authorization,
         "config": cfg.to_dict(),
         "stats": stats,
         "findings": findings,
