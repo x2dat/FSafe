@@ -13,6 +13,7 @@ All sources are passive or extremely light:
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import re
 import socket
@@ -175,13 +176,108 @@ async def geo_section(client: httpx.AsyncClient, hostname: str) -> dict:
         ip = ips[0] if ips else None
         geo = {}
         if ip:
-            r = await client.get(f"http://ip-api.com/json/{ip}?fields=status,country,regionName,city,isp,org,as,reverse,query", timeout=10)
-            j = r.json()
-            if j.get("status") == "success":
-                geo = {k: j.get(k) for k in ("country", "regionName", "city", "isp", "org", "as", "reverse")}
+            geo = await _geo_lookup(client, ip)
         return {"ip": ip, "all_ips": ips[:8], **geo}
     except Exception:
         return {"ip": None}
+
+
+async def _geo_lookup(client: httpx.AsyncClient, ip: str) -> dict:
+    """IP geo/ASN lookup, HTTPS-first (ipwho.is) with ip-api.com as fallback.
+    Only the resolved IP is sent — never any crawled content."""
+    try:  # HTTPS provider
+        r = await client.get(f"https://ipwho.is/{ip}", timeout=10)
+        j = r.json()
+        if j.get("success") and not j.get("error"):
+            conn = j.get("connection") or {}
+            return {"country": j.get("country"), "regionName": j.get("region"),
+                    "city": j.get("city"), "isp": conn.get("isp"), "org": conn.get("org"),
+                    "as": conn.get("asn") and f"AS{conn.get('asn')} {conn.get('org') or ''}".strip(),
+                    "reverse": j.get("connection", {}).get("domain") or ""}
+    except Exception:
+        pass
+    try:  # HTTP fallback
+        r = await client.get(f"http://ip-api.com/json/{ip}?fields=status,country,regionName,city,isp,org,as,reverse,query", timeout=10)
+        j = r.json()
+        if j.get("status") == "success":
+            return {k: j.get(k) for k in ("country", "regionName", "city", "isp", "org", "as", "reverse")}
+    except Exception:
+        pass
+    return {}
+
+
+# ---------------- TLS certificate inspection ----------------
+
+async def cert_section(hostname: str, port: int = 443) -> dict:
+    """Inspect the served certificate: chain validity, hostname match,
+    self-signed status, key type/size, and a Certificate-Transparency hint."""
+    import ssl as _ssl
+    import datetime
+    out: dict = {}
+    ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+    try:
+        # pass 1: verify the chain the way a browser would
+        r, w = await asyncio.wait_for(asyncio.open_connection(hostname, port, ssl=ctx), timeout=8)
+        der = r.getpeercert(binary_form=True) or b""
+        w.close()
+        out["chain_valid"] = True
+        out["served_cert"] = _describe_der(der)
+    except _ssl.SSLCertVerificationError as e:
+        msg = str(e)
+        out["chain_valid"] = False
+        out["verify_error"] = msg.split("(")[0].strip()[:160]
+        out["self_signed"] = "self signed" in msg or "self-signed" in msg
+        out["hostname_mismatch"] = "hostname mismatch" in msg or "certificate is not valid for" in msg
+        out["expired"] = "certificate has expired" in msg or "expired" in msg.lower()
+        # pass 2: grab the cert without verification so we can still describe it
+        ctx2 = _ssl.SSLContext(_ssl.PROTOCOL_TLS_CLIENT)
+        ctx2.check_hostname = False
+        ctx2.verify_mode = _ssl.CERT_NONE
+        try:
+            r2, w2 = await asyncio.wait_for(asyncio.open_connection(hostname, port, ssl=ctx2), timeout=8)
+            der2 = r2.getpeercert(binary_form=True) or b""
+            w2.close()
+            out["served_cert"] = _describe_der(der2)
+        except Exception:
+            pass
+    except Exception:
+        return out  # no TLS on this port / unreachable
+    return out
+
+
+def _describe_der(der: bytes) -> dict:
+    """Describe a DER certificate without third-party dependencies."""
+    import hashlib
+    from . import _minider
+    info: dict = {}
+    try:
+        info["sha256_fp"] = ":".join(hashlib.sha256(der).hexdigest()[i:i+2] for i in range(0, 16, 2)).upper()
+        info.update(_minider.cert_fields(der))
+    except Exception:
+        info["note"] = "certificate could not be parsed"
+    return info
+
+
+# ---------------- wildcard-DNS detection ----------------
+
+async def wildcard_dns_section(client: httpx.AsyncClient, domain: str) -> dict:
+    """If random subdomains resolve, the zone wildcard-resolves — every
+    'subdomain takeover' and 'phantom subdomain' signal becomes unreliable."""
+    probes = [f"fsafe-rand-{i}.{domain}" for i in range(2)]
+    resolved = []
+    for p in probes:
+        recs = await _doh(client, p, "A")
+        if recs:
+            resolved.append(p)
+    return {"wildcard": len(resolved) == len(probes) and resolved, "probes": probes,
+            "resolved": resolved}
+
+
+async def mx_cohost_section(client: httpx.AsyncClient, domain: str) -> dict:
+    """Which MX hosts serve this domain — reused later for shared-infra anomalies."""
+    mx = [r["data"] for r in (await _doh(client, domain, "MX")) if r.get("data")]
+    hosts = sorted({m.split()[-1].rstrip(".").lower() for m in mx if " " in m})[:8]
+    return {"hosts": hosts}
 
 
 # ---------------- light port check ----------------
@@ -290,7 +386,11 @@ async def run_recon(cfg: ScanConfig, client: httpx.AsyncClient, home_headers: di
         ("ports", ports_section(hostname)),
         ("whois", asyncio.to_thread(whois_section, domain)),
         ("wellknown", wellknown_section(client, cfg.url)),
+        ("wildcard_dns", wildcard_dns_section(client, domain)),
+        ("mx", mx_cohost_section(client, domain)),
     ]
+    if p.scheme == "https":
+        steps.append(("cert", cert_section(hostname, urlparse(cfg.url).port or 443)))
     done = await asyncio.gather(*[step(n, c) for n, c in steps])
     for name, value in done:
         out[name] = value
@@ -337,4 +437,33 @@ def recon_findings(recon: dict, domain: str) -> list[dict]:
         add("No security.txt", "info",
             "Researchers have no published channel to report vulnerabilities.",
             "Publish /.well-known/security.txt with a Contact field.", "CWE-1059")
+
+    cert = recon.get("cert", {})
+    served = cert.get("served_cert") or {}
+    if cert and served:
+        try:
+            exp = datetime.datetime.fromisoformat(served["not_after"])
+            days = (exp - datetime.datetime.now(datetime.timezone.utc)).days
+            if days < 0:
+                add("TLS certificate expired", "critical",
+                    f"Certificate expired {abs(days)} day(s) ago — browsers block the site.",
+                    "Renew the certificate immediately.", "CWE-324", served["not_after"])
+            elif days < 14:
+                add("TLS certificate expiring", "medium",
+                    f"Certificate expires in {days} day(s).",
+                    "Renew the certificate.", "CWE-324", served["not_after"])
+        except Exception:
+            pass
+        if served.get("self_signed"):
+            add("Self-signed certificate", "high",
+                "No trusted CA signs this certificate; visitors get warnings (or worse, learn to click through them).",
+                "Use a certificate from a trusted CA (e.g. Let's Encrypt).", "CWE-295")
+        if served.get("key_algo") == "RSA" and served.get("key_bits", 9999) < 2048:
+            add("Weak TLS key size", "high",
+                f"{served.get('key_bits')}-bit RSA key is below the 2048-bit minimum.",
+                "Reissue the certificate with a 2048+ bit key (or ECDSA).", "CWE-326")
+        if served.get("sig_algo") in ("md5WithRSAEncryption", "sha1WithRSAEncryption"):
+            add("Weak certificate signature algorithm", "high",
+                f"Certificate is signed with {served.get('sig_algo')} — cryptographically broken.",
+                "Reissue with SHA-256 or better.", "CWE-327")
     return out

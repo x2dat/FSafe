@@ -58,13 +58,10 @@ def parse_page(page: PageData) -> None:
             if u and u.startswith("http://"):
                 page.mixed_content.append(u)
         for tag in soup.find_all(True, href=True):
-            if tag.name in ("link",):
-                u = _abs(page.url, tag.get("href") or "")
-                if u and u.startswith("http://") and "stylesheet" in (tag.get("rel") or []) or (
-                    u and u.startswith("http://") and tag.get("rel") == ["stylesheet"]
-                ):
-                    if u not in page.mixed_content:
-                        page.mixed_content.append(u)
+            u = _abs(page.url, tag.get("href") or "")
+            if u and u.startswith("http://") and "stylesheet" in (tag.get("rel") or []):
+                if u not in page.mixed_content:
+                    page.mixed_content.append(u)
 
     # forms
     for f in soup.find_all("form"):

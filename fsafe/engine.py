@@ -5,6 +5,7 @@ import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 from .http_client import RateLimitedClient, normalize_url, same_scope, origin_of
 from .crawler import Crawler
@@ -75,7 +76,10 @@ class Engine:
             job.log_lines.append(line)
             print(f"  {line}")
 
-        client = RateLimitedClient(delay=cfg.delay, timeout=cfg.timeout)
+        client = RateLimitedClient(delay=cfg.delay, timeout=cfg.timeout,
+                                   scope=origin_of(cfg.url),
+                                   extra_origins=["http://" + urlparse(cfg.url).netloc],
+                                   on_violation=lambda u: log(f"BLOCKED out-of-scope request: {u}"))
         try:
             job.status = "running"
             log(f"scan started → {cfg.url} (max_pages={cfg.max_pages}, delay={cfg.delay}s)")
@@ -100,6 +104,7 @@ class Engine:
                 crawler.probed_paths, {p.url for p in crawl.pages}))
 
             # ---- recon (DNS, WHOIS, subdomains, ports, tech, emails…) ----
+            # runs BEFORE brutal + anomaly detection, which consume its facts
             if cfg.include_recon:
                 from .recon import run_recon, recon_findings
                 home = crawl.pages[0] if crawl.pages else None
@@ -108,6 +113,16 @@ class Engine:
                                             home.headers if home else {},
                                             htmls, log, progress)
                 findings.extend(recon_findings(job.recon, cfg.url.split("//")[-1].split("/")[0]))
+
+            # ---- brutal mode: deep active payload battery (authorized targets) ----
+            if cfg.brutal:
+                from .brutal import run_brutal
+                findings.extend(await run_brutal(cfg, client, crawl, job.recon or None,
+                                                 stats, log, progress))
+
+            # ---- infrastructure anomaly detection ----
+            from .anomalies import anomaly_findings
+            findings.extend(await anomaly_findings(cfg, client, crawl, job.recon or None, log, progress))
 
             # dedupe
             seen: set = set()
@@ -143,6 +158,8 @@ class Engine:
             job.error = f"{type(e).__name__}: {e}"
             log("scan failed: " + traceback.format_exc(limit=6))
         finally:
+            if client.violations:
+                log(f"scope guard: {len(client.violations)} out-of-scope request(s) refused")
             await client.aclose()
             stats.finished_at = stats.finished_at or time.time()
 

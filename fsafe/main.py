@@ -1,6 +1,7 @@
 """FSafe web server: dashboard UI + JSON API.
 
-Run:  python -m app.main      → http://127.0.0.1:8787
+Run:  fsafe-dashboard          (or: python -m fsafe.main)
+      → http://127.0.0.1:8787
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from .engine import ENGINE
 from .models import ScanConfig
 
 app = FastAPI(title="FSafe", docs_url="/api/docs")
-STATIC = Path(__file__).resolve().parent.parent / "frontend"
+STATIC = Path(__file__).resolve().parent / "frontend"
 
 
 class ScanRequest(BaseModel):
@@ -26,6 +27,7 @@ class ScanRequest(BaseModel):
     brute_dirs: bool = True
     respect_robots: bool = True
     include_recon: bool = True
+    brutal: bool = False
     authorized: bool = False
 
 
@@ -40,10 +42,12 @@ async def start_scan(req: ScanRequest):
         raise HTTPException(400, "max_pages must be 1-300")
     if req.delay < 0:
         raise HTTPException(400, "delay must be >= 0")
+    if req.brutal and not req.authorized:
+        raise HTTPException(400, "brutal mode requires explicit authorization")
     cfg = ScanConfig(
         url=req.url, max_pages=req.max_pages, delay=req.delay,
         brute_dirs=req.brute_dirs, respect_robots=req.respect_robots,
-        include_recon=req.include_recon, authorized=req.authorized)
+        include_recon=req.include_recon, brutal=req.brutal, authorized=req.authorized)
     job, err = ENGINE.create_job(cfg)
     if err:
         raise HTTPException(400, err)
@@ -84,6 +88,9 @@ async def job_json(job_id: str):
 def run():
     import socket
     import uvicorn
+
+    from .colors import force_utf8_stdio
+    force_utf8_stdio()
 
     preferred = int(os.environ.get("FSAFE_PORT", "8787"))
     port = preferred

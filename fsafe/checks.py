@@ -201,7 +201,7 @@ def check_outgoing_links(result: CrawlResult, scope: str) -> list[Finding]:
                       scope, f"{len(off)} unique external/redirect targets observed (first few: "
                       + ", ".join(u[:80] for u in off[:5]) + ").",
                       "Review whether these redirects are intended (open-redirect sink candidates).",
-                      "CWE-601", confidence="info"))
+                      "CWE-601"))
     return out
 
 
@@ -449,9 +449,6 @@ async def run_all_checks(cfg: ScanConfig, client: RateLimitedClient, result: Cra
 
     active = await active_checks(cfg, client, result, stats, log, progress_cb)
     findings.extend(active)
-
-    # probed sensitive paths → findings
-    crawler_paths = getattr(result, "_probed_paths_cache", None)
     return findings
 
 

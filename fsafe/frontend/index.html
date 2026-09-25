@@ -64,6 +64,8 @@ a{color:var(--acc)}
   <div class="chk"><input type="checkbox" id="recon" checked><label for="recon" style="margin:0">Gather recon — DNS, WHOIS, subdomains, hosting, ports, tech stack, emails</label></div>
   <div class="chk"><input type="checkbox" id="brute" checked><label for="brute" style="margin:0">Probe common sensitive paths (.env, backups, admin panels…)</label></div>
   <div class="chk"><input type="checkbox" id="robots" checked><label for="robots" style="margin:0">Respect robots.txt</label></div>
+  <div class="chk"><input type="checkbox" id="brutal"><label for="brutal" style="margin:0">
+    <b style="color:var(--crit)">BRUTAL mode</b> — deep active battery: SQLi/XSS/SSRF/command-injection/IDOR/auth payloads against every parameter. Authorized targets only.</label></div>
   <div class="chk"><input type="checkbox" id="authorized"><label for="authorized" style="margin:0">
     I confirm I <b>own this target or have written permission</b> to security-test it.</label></div>
   <div class="notice">⚠ Scanning systems without authorization is illegal in most jurisdictions
@@ -116,6 +118,7 @@ async function startScan(){
     brute_dirs:document.getElementById('brute').checked,
     include_recon:document.getElementById('recon').checked,
     respect_robots:document.getElementById('robots').checked,
+    brutal:document.getElementById('brutal').checked,
     authorized:true};
   const r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const j=await r.json();

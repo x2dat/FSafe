@@ -3,6 +3,21 @@ from __future__ import annotations
 
 import os
 import platform
+import sys
+
+
+def force_utf8_stdio() -> None:
+    """Force UTF-8 on stdout/stderr so emoji/box-drawing survive piped or
+    redirected output (Windows defaults to the legacy code page, e.g. cp1252,
+    when stdout is not a TTY — which previously crashed with UnicodeEncodeError)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass  # non-standard stream wrapper (IDE capture, tests) — best effort
+
+
+force_utf8_stdio()
 
 # enables ANSI on legacy Windows consoles
 if platform.system() == "Windows":

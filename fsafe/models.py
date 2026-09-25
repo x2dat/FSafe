@@ -70,6 +70,8 @@ class ScanConfig:
     brute_dirs: bool = True
     respect_robots: bool = True
     include_recon: bool = True  # DNS/WHOIS/subdomains/ports/tech/emails
+    brutal: bool = False  # deep active payload battery (authorized targets only!)
+    brutal_probe_subdomains: bool = False  # explicit consent: fetch discovered subdomains
     authorized: bool = False  # must be True to start a scan
 
     def to_dict(self) -> dict:
@@ -80,8 +82,9 @@ class ScanConfig:
             "timeout": self.timeout,
             "brute_dirs": self.brute_dirs,
             "respect_robots": self.respect_robots,
-            "include_recon": self.include_recon,
-        }
+        "include_recon": self.include_recon,
+        "brutal": self.brutal,
+    }
 
 
 @dataclass

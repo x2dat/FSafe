@@ -34,6 +34,12 @@ def main() -> int:
     ap.add_argument("--ignore-robots", action="store_true", help="ignore robots.txt (still stay legal!)")
     ap.add_argument("--out", default="fsafe_report.html", help="output HTML report path")
     ap.add_argument("--json-out", default=None, help="optional JSON report path")
+    ap.add_argument("--brutal", action="store_true",
+                    help="BRUTAL mode: deep active payload battery (SQLi/XSS/SSRF/...) — "
+                         "VERY aggressive, authorized targets only")
+    ap.add_argument("--brutal-probe-subdomains", action="store_true",
+                    help="with --brutal: also fetch DNS-discovered subdomains to "
+                         "fingerprint takeover candidates (out-of-scope hosts!)")
     ap.add_argument("--yes", action="store_true", help="assert authorization non-interactively (CI use)")
     args = ap.parse_args()
 
@@ -43,6 +49,11 @@ def main() -> int:
     print(f"Before scanning, confirm your authorization for {BOLD}{args.url}{RESET}:")
     print(dim("  You must own this target OR have written permission from its owner to"))
     print(dim("  security-test it. Unauthorized scanning is illegal in most jurisdictions."))
+    if args.brutal:
+        print(err("⚠  BRUTAL MODE — hundreds of active payloads against the target."))
+        print(err("   Only for targets you own or have written permission to attack."))
+        if args.brutal_probe_subdomains:
+            print(err("   Subdomain probing is ON — discovered hosts WILL be fetched (out of the exact-origin scope)."))
     if args.yes:
         method = "asserted via --yes flag"
         print(warn("\nAuthorization ASSERTED via --yes — you are responsible for this claim."))
@@ -53,11 +64,18 @@ def main() -> int:
             return 2
         method = "typed confirmation 'I am authorized'"
         print(ok("✓ Authorization confirmed."))
+        if args.brutal:
+            b = input(f"{BOLD}Brutal mode also requires typing:{RESET} I consent to brutal testing\n> ").strip()
+            if b.lower() != "i consent to brutal testing":
+                print(err("✖ Aborted — brutal mode requires explicit consent."))
+                return 2
+            method += " + brutal consent"
 
     cfg = ScanConfig(
         url=args.url, max_pages=args.max_pages, delay=args.delay, timeout=args.timeout,
         brute_dirs=not args.no_brute, respect_robots=not args.ignore_robots,
-        include_recon=not args.no_recon, authorized=True)
+        include_recon=not args.no_recon, brutal=args.brutal,
+        brutal_probe_subdomains=args.brutal_probe_subdomains, authorized=True)
 
     engine = Engine()
     # recorded in the reports: proof that the operator agreed, and when
